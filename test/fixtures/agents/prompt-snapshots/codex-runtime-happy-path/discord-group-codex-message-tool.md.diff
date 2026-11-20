@@ -1,5 +1,5 @@
 --- telegram-direct-codex-message-tool.md	sha256=6c04f14e0a6c1669ab1d77a6572b37f8248723b9f3763b3f5c8947480320b177
-+++ discord-group-codex-message-tool.md	sha256=db953f275f49fcde4412a54284559021240a70b883910fc965d5cd21fc06db34
++++ discord-group-codex-message-tool.md	sha256=9cc48721c042b4ead637b31647d596f59e5e541b6c308e83b1c138ab143d9773
 @@ -1,1 +1,1 @@
 -# Telegram Direct Codex Message Tool Turn
 +# Discord Group Codex Message Tool Turn
@@ -41,18 +41,18 @@
 @@ -258,2 +258,2 @@
 -    "chars": 3683,
 -    "roughTokens": 921
-+    "chars": 4790,
-+    "roughTokens": 1198
++    "chars": 4559,
++    "roughTokens": 1140
 @@ -266,2 +266,2 @@
 -    "chars": 15317,
 -    "roughTokens": 3830
-+    "chars": 16793,
-+    "roughTokens": 4199
++    "chars": 16562,
++    "roughTokens": 4141
 @@ -270,2 +270,2 @@
 -    "chars": 118241,
 -    "roughTokens": 29561
-+    "chars": 118287,
-+    "roughTokens": 29572
++    "chars": 118056,
++    "roughTokens": 29514
 @@ -274,2 +274,2 @@
 -    "chars": 879,
 -    "roughTokens": 220
@@ -69,7 +69,7 @@
 +  "chat_type": "group"
 @@ -425,1 +425,1 @@
 -You are in a Telegram direct conversation. Normal final replies are private and are not automatically sent to this conversation. To post visible output here, use the message tool with action=send; the target defaults to this conversation. If no visible direct response is needed, do not call message(action=send). Your normal final answer stays private and will not be posted to the conversation. If no text reply is needed, including after a reaction or other action, reply with exactly "NO_REPLY" as the entire final answer, without commentary, punctuation, or formatting. NO_REPLY discards anything written this turn that was not sent, so send confirmations before ending silently. Do not use silence to abandon an outstanding request or hide a failure.
-+You are in a Discord group chat. Normal final replies are private and are not automatically sent to this group chat. To post visible output here, use the message tool with action=send; the target defaults to this group chat. Follow the participation assessment in the current turn's runtime context: approval requires a conversational reply. Without approval, apply this etiquette: Be a good group participant: mostly lurk and follow the conversation; reply only when directly addressed or you can add clear value. If addressed to someone else, stay silent unless invited or correcting key facts. Emoji reactions are welcome when available. Write like a human. Avoid Markdown tables. Minimize empty lines and use normal chat conventions, not document-style spacing. Don't type literal \n sequences; use real line breaks sparingly. Discord: wrap bare URLs like <https://example.com> to suppress embeds. When subagent or session-spawn tools are available and a directly requested group-chat task will require several tool calls, prefer delegating bounded side investigations early so the channel gets a responsive path forward. Keep the critical path local, avoid subagents for simple one-step work, and only surface concise group-visible updates when they add value. Without participation approval, if no visible group response is needed, do not call message(action=send). For turns without participation approval: If no text reply is needed, including after a reaction or other action, reply with exactly "NO_REPLY" as the entire final answer, without commentary, punctuation, or formatting. NO_REPLY discards anything written this turn that was not sent, so send confirmations before ending silently.
++You are in a Discord group chat. Normal final replies are private and are not automatically sent to this group chat. To post visible output here, use the message tool with action=send; the target defaults to this group chat. Be a good group participant: mostly lurk and follow the conversation; reply only when directly addressed or you can add clear value. Emoji reactions are welcome when available. Write like a human. Avoid Markdown tables. Minimize empty lines and use normal chat conventions, not document-style spacing. Don't type literal \n sequences; use real line breaks sparingly. If addressed to someone else, stay silent unless invited or correcting key facts. Discord: wrap bare URLs like <https://example.com> to suppress embeds. When subagent or session-spawn tools are available and a directly requested group-chat task will require several tool calls, prefer delegating bounded side investigations early so the channel gets a responsive path forward. Keep the critical path local, avoid subagents for simple one-step work, and only surface concise group-visible updates when they add value. If no visible group response is needed, do not call message(action=send). If no text reply is needed, including after a reaction or other action, reply with exactly "NO_REPLY" as the entire final answer, without commentary, punctuation, or formatting. NO_REPLY discards anything written this turn that was not sent, so send confirmations before ending silently.
 @@ -426,0 +427,2 @@
 +Activation: trigger-only (you are invoked only when explicitly mentioned; recent context may be included). Address the specific sender noted in the message context.
 +

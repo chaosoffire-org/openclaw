@@ -206,7 +206,6 @@ export async function prepareReplyAgentPayloads(state: {
     directBlockDeliveries,
     resolveReplyDelivery: opts?.resolveReplyDelivery,
     sourceReplyDeliveryState: runResult.sourceReplyDeliveryState,
-    sourceOnly: authoredSilence && terminalReplyExpectation === "result-required",
   });
   const sourceReplyDelivery = resolveSourceReplyDelivery(runResult, terminalReplyDelivery);
   let completion = resolveReplyCompletion(
@@ -222,7 +221,6 @@ export async function prepareReplyAgentPayloads(state: {
             : pendingContinuation
               ? "pending"
               : "empty",
-    sourceReplyDelivery,
   );
   const explicitSilence = completion.outcome === "silent";
   if (replyOperationRunState) {
