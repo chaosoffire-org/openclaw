@@ -36,6 +36,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.launch
 
 private sealed interface GatewayAdditionStep {
   data object Scan : GatewayAdditionStep
@@ -81,12 +83,15 @@ internal fun GatewayAdditionDialog(
   var address by remember(request) { mutableStateOf("") }
   var token by remember(request) { mutableStateOf("") }
   var password by remember(request) { mutableStateOf("") }
+  var accessClientId by remember(request) { mutableStateOf("") }
+  var accessClientSecret by remember(request) { mutableStateOf("") }
   var cameraAllowed by remember {
     mutableStateOf(context.hasPermission(Manifest.permission.CAMERA))
   }
   val scanner = remember(request) { createSetupBarcodeScanner() }
   val handoff by viewModel.gatewayConnectionHandoff.collectAsState()
   val gateways by viewModel.pairedGateways.collectAsState()
+  val scope = rememberCoroutineScope()
 
   fun isCurrent() = active.get() && viewModel.gatewayAdditionRequest.value === request
 
@@ -275,6 +280,37 @@ internal fun GatewayAdditionDialog(
               label = nativeString("Password (optional)"),
               secret = true,
             )
+            Text(
+              text = nativeString("Cloudflare Access (optional)"),
+              style = ClawTheme.type.caption,
+              color = ClawTheme.colors.textMuted,
+            )
+            ClawTextField(
+              value = accessClientId,
+              onValueChange = {
+                accessClientId = it
+                step = GatewayAdditionStep.Manual()
+              },
+              placeholder = "",
+              label = nativeString("Access Client ID"),
+              maxLines = 1,
+            )
+            ClawTextField(
+              value = accessClientSecret,
+              onValueChange = {
+                accessClientSecret = it
+                step = GatewayAdditionStep.Manual()
+              },
+              placeholder = "",
+              label = nativeString("Access Client Secret"),
+              secret = true,
+              maxLines = 1,
+            )
+            Text(
+              text = nativeString("Sent as CF-Access-Client-Id / CF-Access-Client-Secret for this gateway."),
+              style = ClawTheme.type.caption,
+              color = ClawTheme.colors.textMuted,
+            )
             current.error?.let { Text(it, color = ClawTheme.colors.warning) }
             ClawPrimaryButton(text = nativeString("Continue"), onClick = ::stageManual, modifier = Modifier.fillMaxWidth())
           }
@@ -291,7 +327,16 @@ internal fun GatewayAdditionDialog(
             ClawPrimaryButton(
               text = nativeString("Connect"),
               enabled = !handoff.pending,
-              onClick = { if (isCurrent()) viewModel.saveGatewayConfigAndConnect(GatewayConnectPlan(config, GatewaySavedAuthAction.REPLACE_SETUP), request) },
+              onClick = {
+                if (isCurrent()) {
+                  scope.launch {
+                    viewModel.saveGatewayCustomHeaders(endpoint.stableId, accessClientId, accessClientSecret)
+                    if (isCurrent()) {
+                      viewModel.saveGatewayConfigAndConnect(GatewayConnectPlan(config, GatewaySavedAuthAction.REPLACE_SETUP), request)
+                    }
+                  }
+                }
+              },
               modifier = Modifier.fillMaxWidth().testTag("gateway-add-connect"),
             )
           }
