@@ -383,6 +383,8 @@ fun OnboardingFlow(
     var manualTls by rememberSaveable { mutableStateOf(false) }
     var token by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
+    var accessClientId by rememberSaveable { mutableStateOf("") }
+    var accessClientSecret by rememberSaveable { mutableStateOf("") }
     var setupErrorCode by rememberSaveable(stateSaver = OnboardingErrorCodeSaver) { mutableStateOf(OnboardingErrorCode.None) }
     var setupScanErrorCode by rememberSaveable(stateSaver = OnboardingErrorCodeSaver) { mutableStateOf(OnboardingErrorCode.None) }
     var attemptedGatewayName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -394,6 +396,7 @@ fun OnboardingFlow(
     var nodeApprovalCheckRefreshStarted by rememberSaveable { mutableStateOf(false) }
     var nodeApprovalAutoContinueEnabled by rememberSaveable { mutableStateOf(false) }
     var nativeNodeApprovalRequested by rememberSaveable { mutableStateOf(false) }
+    val pairingScope = rememberCoroutineScope()
     val ready =
       canFinishOnboarding(
         isConnected = isConnected,
@@ -704,7 +707,17 @@ fun OnboardingFlow(
         setupErrorCode = onboardingErrorCode(endpointError, GatewayEndpointInputSource.MANUAL)
         return
       }
-      connectGateway(plan = plan, inputSource = OnboardingGatewayInputSource.Manual)
+      val endpoint =
+        GatewayEndpoint.manual(
+          host = plan.config.host,
+          port = plan.config.port,
+          tlsEnabled = plan.config.tls,
+          contextPath = plan.config.contextPath,
+        )
+      pairingScope.launch {
+        viewModel.saveGatewayCustomHeaders(endpoint.stableId, accessClientId, accessClientSecret)
+        connectGateway(plan = plan, inputSource = OnboardingGatewayInputSource.Manual)
+      }
     }
 
     val galleryPicker =
@@ -860,6 +873,8 @@ fun OnboardingFlow(
           manualTls = manualTls,
           token = token,
           password = password,
+          accessClientId = accessClientId,
+          accessClientSecret = accessClientSecret,
           error = setupErrorCode.nativeTextOrNull()?.resolveNativeTextResource(),
           mascotMood = onboardingMascotMood(step = step, setupErrorCode = setupErrorCode),
           onBack = ::goBack,
@@ -878,6 +893,14 @@ fun OnboardingFlow(
           },
           onPasswordChange = {
             password = it
+            setupErrorCode = OnboardingErrorCode.None
+          },
+          onAccessClientIdChange = {
+            accessClientId = it
+            setupErrorCode = OnboardingErrorCode.None
+          },
+          onAccessClientSecretChange = {
+            accessClientSecret = it
             setupErrorCode = OnboardingErrorCode.None
           },
           onPair = ::pairFromManualFields,
@@ -1647,6 +1670,8 @@ private fun ManualGatewaySetupScreen(
   manualTls: Boolean,
   token: String,
   password: String,
+  accessClientId: String,
+  accessClientSecret: String,
   error: String?,
   mascotMood: MascotMood,
   onBack: () -> Unit,
@@ -1655,6 +1680,8 @@ private fun ManualGatewaySetupScreen(
   onManualTlsChange: (Boolean) -> Unit,
   onTokenChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
+  onAccessClientIdChange: (String) -> Unit,
+  onAccessClientSecretChange: (String) -> Unit,
   onPair: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -1711,6 +1738,28 @@ private fun ManualGatewaySetupScreen(
         item {
           LabeledField(label = nativeString("Password")) {
             ClawTextField(value = password, onValueChange = onPasswordChange, placeholder = nativeString("Password optional"), secret = true)
+          }
+        }
+        item {
+          LabeledField(label = nativeString("Cloudflare Access (optional)")) {
+            ClawTextField(
+              value = accessClientId,
+              onValueChange = onAccessClientIdChange,
+              placeholder = nativeString("Access Client ID"),
+              maxLines = 1,
+            )
+            ClawTextField(
+              value = accessClientSecret,
+              onValueChange = onAccessClientSecretChange,
+              placeholder = nativeString("Access Client Secret"),
+              secret = true,
+              maxLines = 1,
+            )
+            Text(
+              text = nativeString("Sent as CF-Access-Client-Id / CF-Access-Client-Secret for this gateway."),
+              style = ClawTheme.type.caption,
+              color = ClawTheme.colors.textMuted,
+            )
           }
         }
         item {
