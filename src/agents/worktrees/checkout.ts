@@ -214,7 +214,7 @@ export async function prepareManagedWorktreeTemplate(options: CheckoutOptions) {
           const status = await git.run(
             existing.path,
             ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--ignored"],
-            gitOptions(templateOptions),
+            { ...gitOptions(templateOptions), env: { GIT_OPTIONAL_LOCKS: "0" } },
           );
           // NUL records keep filenames from impersonating HEAD headers.
           const fields = status.stdout.split("\0");

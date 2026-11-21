@@ -59,7 +59,10 @@ export async function retainWorktreeTemplate(
   env: NodeJS.ProcessEnv,
   selection:
     | WorktreeTemplateRecord
-    | (Pick<WorktreeTemplateRecord, "cacheKey" | "contentKey" | "backend"> & { now?: number }),
+    | (Pick<WorktreeTemplateRecord, "cacheKey" | "contentKey" | "backend"> & {
+        now?: number;
+        validatedId?: string;
+      }),
   assertCurrent: () => void,
   unpublish?: true,
   workerAuthority?: WorktreeWorkerAuthority,
@@ -322,6 +325,31 @@ export async function prepareWorktreeTemplate(params: {
         assertSource();
       },
     );
+    const validateExisting = async (
+      existing: WorktreeTemplateRecord,
+      options: WorktreeFilesystemOptions & Partial<Pick<WorktreeAllocationGuard, "rollbackGuard">>,
+    ) => {
+      try {
+        return (
+          (await worktreePathExists(existing.path)) &&
+          (!validate ||
+            (await timeWorktreePreparationPhase("templateValidate", () =>
+              validate(existing, options),
+            )))
+        );
+      } catch (error) {
+        if (hasWorktreeUnknownOutcome(error)) {
+          retained = await retainWorktreeTemplate(
+            params.env,
+            existing,
+            options.rollbackGuard ?? options.commitGuard,
+            true,
+            { stateOwnerPath: options.workerAuthority?.stateOwnerPath },
+          );
+        }
+        throw error;
+      }
+    };
     while (true) {
       retained = await retainWorktreeTemplate(
         params.env,
@@ -342,6 +370,8 @@ export async function prepareWorktreeTemplate(params: {
       preparationKey ??= JSON.stringify([
         captureOpenClawStateWorkerContext({ env: params.env }).admission.coordinationKey,
         params.cacheKey,
+        params.contentKey,
+        params.backend,
       ]);
       const pending = pendingPreparations.get(preparationKey);
       if (!pending) {
@@ -383,6 +413,39 @@ export async function prepareWorktreeTemplate(params: {
         finishWait();
       }
     }
+    // Validation only reads an existing generation. A different commit's builder
+    // must not hold up a session that can already use its own exact base.
+    const ready = await readTemplateAsync(
+      params.env,
+      params.cacheKey,
+      assertCallerCurrent,
+      params.contentKey,
+      params.options.workerAuthority,
+    );
+    if (
+      ready?.status === "ready" &&
+      ready.backend === params.backend &&
+      ready.contentKey === params.contentKey &&
+      (await validateExisting(ready, params.options))
+    ) {
+      retained = await retainWorktreeTemplate(
+        params.env,
+        {
+          cacheKey: params.cacheKey,
+          contentKey: params.contentKey,
+          backend: params.backend,
+          now: params.backgroundUsedAt ?? params.now(),
+          validatedId: ready.id,
+        },
+        assertCallerCurrent,
+        undefined,
+        params.options.workerAuthority,
+      );
+      if (retained) {
+        setWorktreePreparationTemplate("warm", { reason: "ready" });
+        return retained;
+      }
+    }
     const result = await withWorktreeMutationLease(
       { env: params.env, ...params.options, id: `template:${params.cacheKey}` },
       async (options) => {
@@ -412,26 +475,7 @@ export async function prepareWorktreeTemplate(params: {
         ) {
           // Idle validation is read-only and owned by the selection lease. Publishing
           // no reader until it succeeds keeps fast readers behind that validation.
-          let valid = hasReaders;
-          try {
-            valid ||=
-              (await worktreePathExists(existing.path)) &&
-              (!validate ||
-                (await timeWorktreePreparationPhase("templateValidate", () =>
-                  validate(existing, options),
-                )));
-          } catch (error) {
-            if (hasWorktreeUnknownOutcome(error)) {
-              retained = await retainWorktreeTemplate(
-                params.env,
-                existing,
-                options.rollbackGuard,
-                true,
-                { stateOwnerPath: options.workerAuthority?.stateOwnerPath },
-              );
-            }
-            throw error;
-          }
+          const valid = hasReaders || (await validateExisting(existing, options));
           if (valid && existing.contentKey === params.contentKey) {
             retained = await retainWorktreeTemplate(
               params.env,
