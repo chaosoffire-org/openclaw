@@ -1526,6 +1526,8 @@ private fun GatewaySettingsScreen(
   var tokenInput by remember { mutableStateOf("") }
   var bootstrapTokenInput by remember { mutableStateOf("") }
   var passwordInput by remember { mutableStateOf("") }
+  var accessClientId by remember { mutableStateOf("") }
+  var accessClientSecret by remember { mutableStateOf("") }
   var setupValidationText by remember { mutableStateOf<String?>(null) }
   var manualValidationText by remember { mutableStateOf<String?>(null) }
   var showDiagnostics by rememberSaveable { mutableStateOf(false) }
@@ -1536,6 +1538,14 @@ private fun GatewaySettingsScreen(
   var pendingForgetStableId by remember { mutableStateOf<String?>(null) }
   var pendingRenameStableId by rememberSaveable { mutableStateOf<String?>(null) }
   val renameScope = rememberCoroutineScope()
+  val headerScope = rememberCoroutineScope()
+
+  LaunchedEffect(activeGatewayStableId) {
+    val headers = activeGatewayStableId?.let { viewModel.gatewayCustomHeaders(it) }.orEmpty()
+    accessClientId = headers["CF-Access-Client-Id"].orEmpty()
+    accessClientSecret = headers["CF-Access-Client-Secret"].orEmpty()
+  }
+
   val transport =
     remember(hostInput, tlsInput) {
       gatewayManualTransportPresentation(
@@ -1547,7 +1557,17 @@ private fun GatewaySettingsScreen(
   fun saveAndConnect(plan: GatewayConnectPlan) {
     setupValidationText = null
     manualValidationText = null
-    viewModel.saveGatewayConfigAndConnect(plan)
+    val endpoint =
+      GatewayEndpoint.manual(
+        host = plan.config.host,
+        port = plan.config.port,
+        tlsEnabled = plan.config.tls,
+        contextPath = plan.config.contextPath,
+      )
+    headerScope.launch {
+      viewModel.saveGatewayCustomHeaders(endpoint.stableId, accessClientId, accessClientSecret)
+      viewModel.saveGatewayConfigAndConnect(plan)
+    }
   }
 
   pendingSetupResetPlan?.let { plan ->
@@ -1954,6 +1974,31 @@ private fun GatewaySettingsScreen(
           placeholder = "",
           label = nativeString("Password"),
           secret = true,
+        )
+        Text(
+          text = nativeString("Cloudflare Access (optional)"),
+          style = ClawTheme.type.caption,
+          color = ClawTheme.colors.textMuted,
+        )
+        ClawTextField(
+          value = accessClientId,
+          onValueChange = { accessClientId = it },
+          placeholder = "",
+          label = nativeString("Access Client ID"),
+          maxLines = 1,
+        )
+        ClawTextField(
+          value = accessClientSecret,
+          onValueChange = { accessClientSecret = it },
+          placeholder = "",
+          label = nativeString("Access Client Secret"),
+          secret = true,
+          maxLines = 1,
+        )
+        Text(
+          text = nativeString("Sent as CF-Access-Client-Id / CF-Access-Client-Secret for this gateway."),
+          style = ClawTheme.type.caption,
+          color = ClawTheme.colors.textMuted,
         )
         manualValidationText?.let {
           Text(text = it, style = ClawTheme.type.caption, color = ClawTheme.colors.warning)

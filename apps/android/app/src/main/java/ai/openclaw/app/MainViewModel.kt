@@ -1336,6 +1336,24 @@ class MainViewModel internal constructor(
     name: String,
   ): Boolean = withContext(Dispatchers.IO) { prefs.gatewayRegistry.rename(stableId, name) }
 
+  suspend fun gatewayCustomHeaders(stableId: String): Map<String, String> =
+    withContext(Dispatchers.IO) { prefs.loadGatewayCustomHeaders(stableId) }
+
+  suspend fun saveGatewayCustomHeaders(
+    stableId: String,
+    accessClientId: String,
+    accessClientSecret: String,
+  ) {
+    withContext(Dispatchers.IO) {
+      val headers =
+        buildMap {
+          accessClientId.trim().takeIf { it.isNotEmpty() }?.let { put("CF-Access-Client-Id", it) }
+          accessClientSecret.trim().takeIf { it.isNotEmpty() }?.let { put("CF-Access-Client-Secret", it) }
+        }
+      prefs.saveGatewayCustomHeaders(stableId, headers)
+    }
+  }
+
   fun disconnect() {
     gatewayConfigOperationSeq.incrementAndGet()
     NodeForegroundService.stop(nodeApp)

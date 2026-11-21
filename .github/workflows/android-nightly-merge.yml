@@ -1,0 +1,36 @@
+name: Nightly merge upstream stable
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: app
+          fetch-depth: 0
+
+      - name: Merge latest stable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "openclaw-android-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git remote add upstream https://github.com/openclaw/openclaw.git
+          git fetch upstream --tags --force
+          TAG="$(gh release list --repo openclaw/openclaw --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName')"
+          test -n "${TAG}"
+          echo "Merging ${TAG}"
+          if ! git merge --no-edit "${TAG}"; then
+            echo "Merge failed for ${TAG}; manual merge required." >&2
+            exit 1
+          fi
+          git push origin HEAD:app
