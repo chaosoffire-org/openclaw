@@ -68,8 +68,13 @@ jobs:
           test -n "${APK}"
           BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
           "${BUILD_TOOLS}/aapt2" dump permissions "${APK}" | tee "${RUNNER_TEMP}/apk-permissions.txt"
-          if grep -E 'SEND_SMS|READ_SMS|READ_CALL_LOG|READ_CONTACTS|WRITE_CONTACTS|READ_CALENDAR|WRITE_CALENDAR|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|ACCESS_BACKGROUND_LOCATION|CAMERA|RECORD_AUDIO|ACTIVITY_RECOGNITION|BIND_ACCESSIBILITY_SERVICE' "${RUNNER_TEMP}/apk-permissions.txt"; then
+          if grep -E 'SEND_SMS|READ_SMS|READ_CALL_LOG|READ_CONTACTS|WRITE_CONTACTS|READ_CALENDAR|WRITE_CALENDAR|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|ACCESS_BACKGROUND_LOCATION|CAMERA|RECORD_AUDIO|ACTIVITY_RECOGNITION' "${RUNNER_TEMP}/apk-permissions.txt"; then
             echo "Unexpected sensitive permission in lightweight APK" >&2
+            exit 1
+          fi
+          "${BUILD_TOOLS}/aapt2" dump xmltree "${APK}" --file AndroidManifest.xml > "${RUNNER_TEMP}/manifest.xml"
+          if grep -E 'BIND_NOTIFICATION_LISTENER_SERVICE|BIND_ACCESSIBILITY_SERVICE|READ_SMS|RECEIVE_SMS' "${RUNNER_TEMP}/manifest.xml"; then
+            echo "Unexpected sensitive service/permission in lightweight APK" >&2
             exit 1
           fi
 
