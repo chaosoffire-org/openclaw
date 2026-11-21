@@ -43,8 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${KEYSTORE_BASE64}"
-          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > apps/android/keystore.jks
-          test -s apps/android/keystore.jks
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/keystore.jks"
+          test -s "${RUNNER_TEMP}/keystore.jks"
 
       - name: Configure signing
         env:
@@ -54,17 +54,12 @@ jobs:
           set -euo pipefail
           test -n "${KEYSTORE_PASSWORD}"
           test -n "${KEY_ALIAS}"
-          mkdir -p apps/android/build/release-signing
-          cat > apps/android/build/release-signing/gradle.properties <<PROPS
-          OPENCLAW_ANDROID_STORE_FILE=${GITHUB_WORKSPACE}/apps/android/keystore.jks
-          OPENCLAW_ANDROID_STORE_PASSWORD=${KEYSTORE_PASSWORD}
-          OPENCLAW_ANDROID_KEY_ALIAS=${KEY_ALIAS}
-          OPENCLAW_ANDROID_KEY_PASSWORD=${KEYSTORE_PASSWORD}
-          PROPS
-          while IFS='=' read -r name value; do
-            [ -n "${name}" ] || continue
-            echo "ORG_GRADLE_PROJECT_${name}=${value}" >> "${GITHUB_ENV}"
-          done < apps/android/build/release-signing/gradle.properties
+          {
+            echo "ORG_GRADLE_PROJECT_OPENCLAW_ANDROID_STORE_FILE=${RUNNER_TEMP}/keystore.jks"
+            echo "ORG_GRADLE_PROJECT_OPENCLAW_ANDROID_STORE_PASSWORD=${KEYSTORE_PASSWORD}"
+            echo "ORG_GRADLE_PROJECT_OPENCLAW_ANDROID_KEY_ALIAS=${KEY_ALIAS}"
+            echo "ORG_GRADLE_PROJECT_OPENCLAW_ANDROID_KEY_PASSWORD=${KEYSTORE_PASSWORD}"
+          } >> "${GITHUB_ENV}"
 
       - name: Build signed release APK
         run: bun apps/android/scripts/build-release-artifacts.ts --artifact third-party
