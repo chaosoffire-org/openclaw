@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -61,9 +61,18 @@ jobs:
       - name: Build signed release APK
         run: bun apps/android/scripts/build-release-artifacts.ts --artifact third-party
 
-      - uses: actions/upload-artifact@v4
+      - name: Read tracked stable tag
+        id: stable
+        run: echo "tag=$(cat .upstream-stable-tag)" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish stable APK release
+        uses: softprops/action-gh-release@v2
         with:
-          name: openclaw-android-apk
-          path: |
-            apps/android/build/release-artifacts/*.apk
-            apps/android/build/release-artifacts/*.sha256
+          tag_name: ${{ steps.stable.outputs.tag }}
+          name: Android ${{ steps.stable.outputs.tag }}
+          files: apps/android/build/release-artifacts/*.apk
+          fail_on_unmatched_files: true
+          make_latest: true
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
