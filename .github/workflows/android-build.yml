@@ -59,7 +59,19 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Build signed release APK
-        run: bun apps/android/scripts/build-release-artifacts.ts --artifact third-party
+        run: bun apps/android/scripts/build-release-artifacts.ts --artifact play
+
+      - name: Verify lightweight APK permissions
+        run: |
+          set -euo pipefail
+          APK="$(find apps/android/build/release-artifacts -name '*.apk' -print -quit)"
+          test -n "${APK}"
+          BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
+          "${BUILD_TOOLS}/aapt2" dump permissions "${APK}" | tee "${RUNNER_TEMP}/apk-permissions.txt"
+          if grep -E 'SEND_SMS|READ_SMS|READ_CALL_LOG|READ_CONTACTS|WRITE_CONTACTS|READ_CALENDAR|WRITE_CALENDAR|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|ACCESS_BACKGROUND_LOCATION|CAMERA|RECORD_AUDIO|ACTIVITY_RECOGNITION|BIND_ACCESSIBILITY_SERVICE' "${RUNNER_TEMP}/apk-permissions.txt"; then
+            echo "Unexpected sensitive permission in lightweight APK" >&2
+            exit 1
+          fi
 
       - name: Read tracked stable tag
         id: stable

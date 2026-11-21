@@ -246,6 +246,21 @@ function releaseArtifacts(versionName: string): ReleaseArtifact[] {
       ),
     },
     {
+      flavorName: "play",
+      kind: "apk",
+      gradleTask: ":app:assemblePlayRelease",
+      sourcePath: join(
+        androidDir,
+        "app",
+        "build",
+        "outputs",
+        "apk",
+        "play",
+        "release",
+        `openclaw-${versionName}-play-release.apk`,
+      ),
+    },
+    {
       flavorName: "third-party",
       kind: "apk",
       gradleTask: ":app:assembleThirdPartyRelease",

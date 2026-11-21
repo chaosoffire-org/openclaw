@@ -396,7 +396,8 @@ android {
   productFlavors {
     create("play") {
       dimension = "store"
-      manifestPlaceholders["nodeForegroundServiceType"] = "connectedDevice|microphone"
+      // Play APK is the lightweight chat/node build: no microphone/location/contacts.
+      manifestPlaceholders["nodeForegroundServiceType"] = "connectedDevice"
     }
     create("thirdParty") {
       dimension = "store"
