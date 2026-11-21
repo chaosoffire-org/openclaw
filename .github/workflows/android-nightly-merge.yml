@@ -15,9 +15,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: app
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: Merge latest stable tag
+      - name: Sync tracked upstream tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -25,12 +25,27 @@ jobs:
           git config user.name "openclaw-android-bot"
           git config user.email "bot@users.noreply.github.com"
           git remote add upstream https://github.com/openclaw/openclaw.git
-          git fetch upstream --tags --force
+          OLD="$(cat .upstream-stable-tag 2>/dev/null || echo v2026.11.6)"
           TAG="$(gh release list --repo openclaw/openclaw --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName')"
           test -n "${TAG}"
-          echo "Merging ${TAG}"
-          if ! git merge --no-edit "${TAG}"; then
-            echo "Merge failed for ${TAG}; manual merge required." >&2
+          if [ "${TAG}" = "${OLD}" ]; then
+            echo "Already tracking ${TAG}"
+            exit 0
+          fi
+          echo "Syncing ${OLD} -> ${TAG}"
+          git fetch --depth 1 upstream "refs/tags/${OLD}:refs/tags/${OLD}"
+          git fetch --depth 1 upstream "refs/tags/${TAG}:refs/tags/${TAG}"
+          git diff --binary "${OLD}" "${TAG}" -- apps/android > /tmp/upstream-stable.patch
+          if ! git apply --3way /tmp/upstream-stable.patch; then
+            echo "Upstream patch did not apply cleanly; manual merge required." >&2
             exit 1
           fi
+          printf '%s\n' "${TAG}" > .upstream-stable-tag
+          git add -A apps/android .upstream-stable-tag
+          if git diff --cached --quiet; then
+            echo "No app changes in ${TAG}"
+            git push origin HEAD:app
+            exit 0
+          fi
+          git commit -m "chore: sync upstream ${TAG}"
           git push origin HEAD:app
