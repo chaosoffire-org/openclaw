@@ -30,10 +30,12 @@ jobs:
         with:
           bun-version: latest
 
-      - uses: android-actions/setup-android@v3
-
       - name: Install Android SDK packages
-        run: sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f | sort | tail -1)"
+          yes | "${SDKMANAGER}" --licenses >/dev/null || true
+          "${SDKMANAGER}" --install "platforms;android-37" "build-tools;37.0.0"
 
       - name: Decode signing keystore
         env:
