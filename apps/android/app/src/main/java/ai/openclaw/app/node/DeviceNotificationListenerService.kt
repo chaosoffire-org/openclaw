@@ -425,16 +425,11 @@ class DeviceNotificationListenerService : NotificationListenerService() {
         val action =
           sbn.notification.actions
             ?.firstOrNull { candidate ->
-              // A choices-only input cannot accept arbitrary reply text.
-              candidate.actionIntent != null &&
-                candidate.remoteInputs?.any { it.acceptsReplyText(replyText) } == true
+              // Android reply actions are identified by RemoteInput, not by a stable action title.
+              candidate.actionIntent != null && !candidate.remoteInputs.isNullOrEmpty()
             }
             ?: return notificationActionError("ACTION_UNAVAILABLE", "notification has no reply action")
-        val remoteInputs =
-          action.remoteInputs
-            .orEmpty()
-            .filter { it.acceptsReplyText(replyText) }
-            .toTypedArray()
+        val remoteInputs = action.remoteInputs ?: emptyArray()
         val fillInIntent = Intent()
         val replyBundle = android.os.Bundle()
         for (remoteInput in remoteInputs) {
@@ -447,8 +442,6 @@ class DeviceNotificationListenerService : NotificationListenerService() {
       }
     }
   }
-
-  private fun RemoteInput.acceptsReplyText(text: String): Boolean = allowFreeFormInput || choices?.any { it.toString() == text } == true
 
   private inline fun performNotificationAction(
     fallbackMessage: String,

@@ -546,10 +546,6 @@ class ChatControllerReconnectRestoreTest {
 
       assertEquals(cardRequestsBeforeHealth + 1, gateway.callCount("progressCard.get"))
       assertEquals("Restored", controller.progressCard.value?.markdown)
-
-      controller.handleGatewayEvent("health", null)
-      runCurrent()
-      assertEquals(cardRequestsBeforeHealth + 1, gateway.callCount("progressCard.get"))
     }
 
   @Test

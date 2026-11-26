@@ -80,24 +80,6 @@ class GatewayRegistryStoreTest {
   }
 
   @Test
-  fun onlyAGatewayThatConnectedStaysConnectedAfterTheUserSwitchesAway() {
-    val (prefs, securePrefs) = freshPrefs()
-    val store = prefs.gatewayRegistry
-    val abandoned = manualEntry("abandoned", "abandoned.example")
-    val paired = manualEntry("paired", "paired.example")
-    store.upsert(abandoned)
-    store.upsert(paired)
-
-    store.setActive(abandoned.stableId)
-    store.setActive(paired.stableId)
-    store.markConnected(paired.stableId, 42L)
-    store.setActive(abandoned.stableId)
-
-    val restored = GatewayRegistryStore(SecurePrefs(RuntimeEnvironment.getApplication(), securePrefs))
-    assertEquals(listOf(paired.stableId), restored.connectedStableIds.value)
-  }
-
-  @Test
   fun roundTripUpsertActiveAndRemove() {
     val (prefs, securePrefs) = freshPrefs()
     val store = prefs.gatewayRegistry
@@ -212,7 +194,6 @@ class GatewayRegistryStoreTest {
     val alpha = manualEntry("alpha", "alpha.example")
     store.upsert(alpha)
     store.setActive(alpha.stableId)
-    store.markConnected(alpha.stableId, 42L)
 
     assertFalse(store.rename(alpha.stableId, "Changed"))
     assertEquals("alpha", store.activeEntry()?.displayName)

@@ -182,7 +182,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
-private const val LEGACY_METADATA_REFRESH_INTERVAL_MS = 30_000L
 private const val MAX_PENDING_NOTIFICATION_EVENTS = 128
 private const val NODE_APPROVAL_COMMAND_FRESH_MS = 30_000L
 private const val CRON_RUN_TRACKING_POLL_MS = 2_000L
@@ -555,9 +554,6 @@ internal class NotificationNodeEventOutbox(
     pending.clear()
   }
 }
-
-/** Distinguishes a stalled TLS probe from a WebSocket connect timeout; only the former can offer manual pin entry. */
-internal const val GATEWAY_TLS_HANDSHAKE_TIMEOUT_REASON = "tls-handshake-timeout"
 
 data class GatewayConnectionProblem(
   val code: String?,
@@ -932,7 +928,7 @@ class NodeRuntime internal constructor(
       scope = scope,
       recognizer =
         when (mode) {
-          NodeRuntimeMode.Live -> AndroidOnDeviceVoiceWakeRecognizer(appContext, scope)
+          NodeRuntimeMode.Live -> AndroidOnDeviceVoiceWakeRecognizer(appContext)
           NodeRuntimeMode.ScreenshotFixture -> PreviewVoiceWakeRecognizer()
         },
       initialTriggerWords = VoiceWakePreferences.defaultTriggerWords,
@@ -1167,10 +1163,6 @@ class NodeRuntime internal constructor(
   private val appearancePreferenceWriteMutexes = appearancePreferenceKeys.associateWith { Mutex() }
   private val _modelCatalog = MutableStateFlow<List<GatewayModelSummary>>(emptyList())
   private val modelCatalogRefreshGuard = LatestGatewayRefreshGuard()
-  private var modelCatalogRefresh: ModelCatalogRefresh? = null
-  private var modelCatalogNeedsStatusRefresh = false
-  private var legacyMetadataRefreshJob: Job? = null
-  private var legacyMetadataRefreshPending = false
   val modelCatalog: StateFlow<List<GatewayModelSummary>> = _modelCatalog.asStateFlow()
   private val _providerModelCatalog = MutableStateFlow<List<GatewayModelSummary>>(emptyList())
   val providerModelCatalog: StateFlow<List<GatewayModelSummary>> = _providerModelCatalog.asStateFlow()
@@ -1179,18 +1171,8 @@ class NodeRuntime internal constructor(
   private val _providerModelCatalogErrorText = MutableStateFlow<NativeText?>(null)
   val providerModelCatalogErrorText: StateFlow<String?> = _providerModelCatalogErrorText.resolveOptionalNativeText()
   private val providerModelCatalogRefreshGuard = LatestGatewayRefreshGuard()
-
-  private class ModelCatalogRefresh(
-    val generation: Long,
-  ) {
-    var statusRequested = false
-  }
-
-  private var providerModelCatalogRefresh: ModelCatalogRefresh? = null
-  private var providerModelCatalogNeedsStatusRefresh = true
   private val _modelAuthProviders = MutableStateFlow<List<GatewayModelProviderSummary>>(emptyList())
   val modelAuthProviders: StateFlow<List<GatewayModelProviderSummary>> = _modelAuthProviders.asStateFlow()
-  private val talkSetupRefreshGuard = LatestGatewayRefreshGuard()
   private val _talkSetupReadiness = MutableStateFlow(GatewayTalkSetupReadiness.unverified())
   val talkSetupReadiness: StateFlow<GatewayTalkSetupReadiness> = _talkSetupReadiness.asStateFlow()
   private val _gatewayDefaultAgentId = MutableStateFlow<String?>(null)
@@ -1389,9 +1371,6 @@ class NodeRuntime internal constructor(
     var handedOff = false
     var waitingForAdmission = true
     var deadlineExpired = false
-
-    // Set by the timeout recovery action: open manual pin entry instead of re-probing a handshake that stalls.
-    var manualTlsTrust = false
 
     override fun invoke(): Boolean = isCurrent()
   }
@@ -1746,19 +1725,13 @@ class NodeRuntime internal constructor(
     // physical lease still prevents requests and response publication.
     appearancePreferenceRefreshGuard.invalidate()
     _gatewayAgents.value = emptyList()
-    resetLegacyMetadataRefresh()
     modelCatalogRefreshGuard.invalidate()
-    modelCatalogRefresh = null
-    modelCatalogNeedsStatusRefresh = false
     _modelCatalog.value = emptyList()
     providerModelCatalogRefreshGuard.invalidate()
-    providerModelCatalogRefresh = null
-    providerModelCatalogNeedsStatusRefresh = true
     _providerModelCatalog.value = emptyList()
     _providerModelCatalogRefreshing.value = false
     _providerModelCatalogErrorText.value = null
     _modelAuthProviders.value = emptyList()
-    talkSetupRefreshGuard.invalidate()
     _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
     voiceWakeWordsSaveSeq.incrementAndGet()
     _voiceWakeWordsSaving.value = false
@@ -1983,7 +1956,6 @@ class NodeRuntime internal constructor(
           gatewayAdvertisesMethod = ::gatewayAdvertisesMethod,
           gatewayAdvertisesCapability = ::gatewayAdvertisesCapability,
           currentGatewayCatalogRevision = { gatewayMethodsEpoch.value },
-          inboundMediaBasePath = { _gatewaySourcePreviewConfig.value?.basePath },
           commandOutbox = chatCommandOutbox,
           recordModelRecent = prefs::recordModelRecent,
           onSessionDeleted = ::publishChatSessionDeletion,
@@ -2195,9 +2167,6 @@ class NodeRuntime internal constructor(
   val talkModeEnabled: StateFlow<Boolean>
     get() = talkMode.isEnabled
 
-  val talkMicrophoneMuted: StateFlow<Boolean>
-    get() = talkMode.isMicrophoneMuted
-
   val talkModeListening: StateFlow<Boolean>
     get() = talkMode.isListening
 
@@ -2355,13 +2324,8 @@ class NodeRuntime internal constructor(
     synchronized(gatewayDataScopeLock) {
       if (_mainSessionKey.value == sessionKey) return@synchronized false
       // Retire reads before publishing an agent change, including a switch back to the same agent.
-      resetLegacyMetadataRefresh()
       modelCatalogRefreshGuard.invalidate()
-      modelCatalogRefresh = null
-      modelCatalogNeedsStatusRefresh = false
       providerModelCatalogRefreshGuard.invalidate()
-      providerModelCatalogRefresh = null
-      providerModelCatalogNeedsStatusRefresh = true
       _modelCatalog.value = emptyList()
       _providerModelCatalog.value = emptyList()
       _modelAuthProviders.value = emptyList()
@@ -2446,7 +2410,8 @@ class NodeRuntime internal constructor(
   fun refreshTalkSetupReadiness() = launchGatewayRefresh { refreshTalkSetupReadinessFromGateway() }
 
   fun refreshAgents() {
-    if (mode == NodeRuntimeMode.ScreenshotFixture || (!operatorConnected && !gatewayMethodCatalogPresent)) return
+    if (mode == NodeRuntimeMode.ScreenshotFixture) return
+    // The method catalog is optional; the endpoint-bound request owner enforces readiness.
     val gatewayScope = captureGatewayDataScope() ?: return
     val methods = captureGatewayMethods()
     operatorAgentBootstrapJob?.cancel()
@@ -3466,7 +3431,6 @@ class NodeRuntime internal constructor(
    * Reconnect a live node only when Android authority changed since its last connect.
    */
   fun refreshNodePermissionSurface() {
-    refreshVoiceWakePermission()
     val permissions = connectionManager.buildPermissions()
     if (permissions == lastNodeConnectOptions?.permissions) return
     refreshAcceptedGatewayConnection(refreshOperator = false)
@@ -3577,8 +3541,6 @@ class NodeRuntime internal constructor(
   internal fun acknowledgeTalkModeFailure(notice: TalkFailureNotice): Unit = talkMode.acknowledgeFailure(notice)
 
   fun setTalkModeEnabled(value: Boolean): Unit = setVoiceCaptureMode(if (value) VoiceCaptureMode.TalkMode else VoiceCaptureMode.Off)
-
-  fun setTalkMicrophoneMuted(value: Boolean): Unit = talkMode.setMicrophoneMuted(value)
 
   private suspend fun handleTalkPttStart(): GatewaySession.InvokeResult =
     runTalkPttCommand {
@@ -3906,10 +3868,6 @@ class NodeRuntime internal constructor(
         }
       }
     }
-  }
-
-  internal fun setVoiceWakeBackgroundListeningAllowed(allowed: Boolean) {
-    voiceWakeManager.setBackgroundListeningAllowed(allowed)
   }
 
   fun refreshVoiceWakePermission() {
@@ -4266,12 +4224,8 @@ class NodeRuntime internal constructor(
       }
     }
 
-  fun refreshGatewayConnection(
-    isCurrent: () -> Boolean = { true },
-    manualTlsTrust: Boolean = false,
-  ) {
+  fun refreshGatewayConnection(isCurrent: () -> Boolean = { true }) {
     val intent = beginGatewayReplacementOperation(isCurrent) ?: return
-    intent.manualTlsTrust = manualTlsTrust
     intent.handedOff = true
     launchGatewayLifecycle(intent) {
       val endpoint = connectedEndpoint
@@ -4611,23 +4565,6 @@ class NodeRuntime internal constructor(
     if (tls != null) {
       val storedFingerprint = tls.expectedFingerprint
       intent.handedOff = true
-      if (intent.manualTlsTrust && storedFingerprint == null) {
-        launchGatewayLifecycle({ isCurrentConnectAttempt(connectAttemptId) }) {
-          finishGatewayConnectionOperation(intent)
-          setStandaloneGatewayStatus(gatewayTlsProbeFailureMessage(GatewayTlsProbeFailure.TLS_HANDSHAKE_TIMEOUT), operation = intent)
-          publishGatewayTrustPromptIfCurrent(
-            connectAttemptId = connectAttemptId,
-            prompt =
-              GatewayTrustPrompt(
-                endpoint = endpoint,
-                fingerprintSha256 = null,
-                auth = auth,
-                probeFailure = GatewayTlsProbeFailure.TLS_HANDSHAKE_TIMEOUT,
-              ),
-          )
-        }
-        return
-      }
       tlsProbeJob =
         scope.launch {
           val tlsProbe =
@@ -4698,10 +4635,10 @@ class NodeRuntime internal constructor(
               is GatewayTlsTrustDecision.Failed -> {
                 clearAcceptedConnectAttempt()
                 val problem =
-                  when (decision.reason) {
-                    GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE -> gatewayConnectionProblem(gatewayNetworkConnectError(), false, endpoint)
-                    GatewayTlsProbeFailure.TLS_HANDSHAKE_TIMEOUT -> gatewayConnectionProblem(gatewayNetworkConnectError(timedOut = true).copy(message = gatewayTlsTimeoutText.source), false, endpoint).copy(reason = GATEWAY_TLS_HANDSHAKE_TIMEOUT_REASON)
-                    GatewayTlsProbeFailure.TLS_UNAVAILABLE -> null
+                  if (decision.reason == GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE) {
+                    gatewayConnectionProblem(gatewayNetworkConnectError(), false, endpoint)
+                  } else {
+                    null
                   }
                 setStandaloneGatewayStatus(problem?.message ?: gatewayTlsProbeFailureMessage(decision.reason), problem, operation = intent)
               }
@@ -5409,46 +5346,6 @@ class NodeRuntime internal constructor(
     }
   }
 
-  private fun resetLegacyMetadataRefresh() =
-    synchronized(gatewayDataScopeLock) {
-      legacyMetadataRefreshPending = false
-      legacyMetadataRefreshJob?.cancel()
-      legacyMetadataRefreshJob = null
-    }
-
-  private fun refreshLegacyMetadata() {
-    synchronized(gatewayDataScopeLock) {
-      if (!operatorConnected || mode == NodeRuntimeMode.ScreenshotFixture) return
-      legacyMetadataRefreshPending = true
-      if (legacyMetadataRefreshJob != null) return
-      lateinit var refresh: Job
-      refresh =
-        scope.launch(start = CoroutineStart.LAZY) {
-          try {
-            while (true) {
-              synchronized(gatewayDataScopeLock) {
-                if (!legacyMetadataRefreshPending) return@launch
-                legacyMetadataRefreshPending = false
-                launch { refreshModelCatalogFromGateway(legacyHint = true) }
-                launch { refreshProviderModelsFromGateway(legacyHint = true) }
-                if (!chat.refreshCommandsFromLegacyHint()) legacyMetadataRefreshPending = true
-              }
-              // Stable 2026.9.6 publishes unflagged hints even for read completion. A fixed
-              // window bounds that feedback without postponing changes until it goes quiet.
-              // Remove this path when supported Gateways all publish semantic change flags.
-              delay(LEGACY_METADATA_REFRESH_INTERVAL_MS)
-            }
-          } finally {
-            synchronized(gatewayDataScopeLock) {
-              if (legacyMetadataRefreshJob === refresh) legacyMetadataRefreshJob = null
-            }
-          }
-        }
-      legacyMetadataRefreshJob = refresh
-      refresh.start()
-    }
-  }
-
   private fun handleGatewayEvent(
     event: String,
     payloadJson: String?,
@@ -5460,42 +5357,13 @@ class NodeRuntime internal constructor(
       applyVoiceWakeWords(payloadJson)
     }
     if (operatorConnected && (event == "config.changed" || event == "chat.metadata.changed")) {
-      val change = if (event == "chat.metadata.changed") parseJsonParamsObject(payloadJson) else null
-      val changedAgentId = change.nonBlankString("agentId")
-      val affectsSelectedAgent = changedAgentId == null || selectedChatAgentId == null || changedAgentId.equals(selectedChatAgentId, ignoreCase = true)
-      val legacyHint =
-        event == "chat.metadata.changed" &&
-          change?.keys.orEmpty().none {
-            it == "modelCatalogChanged" || it == "modelCatalogStatusChanged" ||
-              it == "authChanged" || it == "commandsChanged" || it == "modelSelectionChanged"
-          }
-      if (legacyHint) {
-        // Filter before coalescing: another agent's hint cannot replace a relevant one.
-        if (affectsSelectedAgent) refreshLegacyMetadata()
-        return
-      }
-      // Usage publications do not change catalogs; retain auth and selection invalidation.
-      if (
-        change.boolean("modelSelectionChanged") ||
-        (affectsSelectedAgent && (change?.get("modelCatalogChanged") != JsonPrimitive(false) || change.boolean("authChanged")))
-      ) {
-        refreshModelCatalog()
-        refreshProviderModels()
-      } else if (affectsSelectedAgent && change.boolean("modelCatalogStatusChanged")) {
-        launchGatewayRefresh { refreshModelCatalogFromGateway(statusOnly = true) }
-        launchGatewayRefresh { refreshProviderModelsFromGateway(statusOnly = true) }
-      }
+      refreshModelCatalog()
+      refreshProviderModels()
     }
     if (event == "config.changed" || event == GatewayEvent.UsersPrefsChanged.rawValue) {
       // Config changes invalidate the snapshot; profile changes are targeted by
       // the gateway to connections bound to our own profile.
       scope.launch { refreshBrandingFromGateway() }
-    }
-    if (event == "config.changed") {
-      // Drop the cached Talk route before any in-flight catalog read can republish it.
-      talkSetupRefreshGuard.invalidate()
-      _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
-      if (operatorConnected) refreshTalkSetupReadiness()
     }
     if (event == "sessions.catalog.host") {
       val owner = sessionCatalogProgressOwner.get()
@@ -6083,6 +5951,7 @@ class NodeRuntime internal constructor(
       val sessionKey = parseSessionCatalogContinueResult(response, json)
       return withCurrentGatewayData(gatewayScope) {
         if (sessionCatalogContinueSeq.get() != requestSeq) return@withCurrentGatewayData false
+        _sessionCatalogState.value = _sessionCatalogState.value.copy(continuingEntryId = null)
         if (!chatSelectionSeq.compareAndSet(selectionSeq, selectionSeq + 1)) return@withCurrentGatewayData false
         stopMessageSpeech()
         chat.switchSession(sessionKey, entry.agentId)
@@ -6095,18 +5964,12 @@ class NodeRuntime internal constructor(
         if (sessionCatalogContinueSeq.get() == requestSeq) {
           _sessionCatalogState.value =
             _sessionCatalogState.value.copy(
+              continuingEntryId = null,
               errorText = nativeString("Could not open this session."),
             )
         }
       }
       return false
-    } finally {
-      // The Activity's ViewModel can be cleared while this process runtime stays connected.
-      publishGatewayData(gatewayScope) {
-        if (sessionCatalogContinueSeq.get() == requestSeq) {
-          _sessionCatalogState.value = _sessionCatalogState.value.copy(continuingEntryId = null)
-        }
-      }
     }
   }
 
@@ -6594,93 +6457,41 @@ class NodeRuntime internal constructor(
     }
   }
 
-  private suspend fun refreshModelCatalogFromGateway(
-    legacyHint: Boolean = false,
-    statusOnly: Boolean = false,
-  ) {
-    val gatewayScope: GatewayDataScope
-    val agentId: String?
-    val attempt =
-      synchronized(gatewayDataScopeLock) {
-        gatewayScope = captureGatewayDataScope() ?: return
-        agentId = selectedChatAgentId
-        if (legacyHint && modelCatalogRefresh != null) {
-          legacyMetadataRefreshPending = true
-          return
-        }
-        if (statusOnly) {
-          modelCatalogRefresh?.let {
-            it.statusRequested = true
-            return
-          }
-          if (!modelCatalogNeedsStatusRefresh) return
-        }
-        if (!operatorConnected) {
-          _modelCatalog.value = emptyList()
-          _modelAuthProviders.value = emptyList()
-          return
-        }
-        ModelCatalogRefresh(modelCatalogRefreshGuard.begin()).also { modelCatalogRefresh = it }
-      }
-    val refreshGeneration = attempt.generation
+  private suspend fun refreshModelCatalogFromGateway() {
+    val refreshGeneration = modelCatalogRefreshGuard.begin()
+    val gatewayScope = captureGatewayDataScope() ?: return
+    val agentId = selectedChatAgentId
+    if (!operatorConnected) {
+      _modelCatalog.value = emptyList()
+      _modelAuthProviders.value = emptyList()
+      return
+    }
     try {
       val params = buildJsonObject { if (agentId != null) put("agentId", JsonPrimitive(agentId)) }
       val catalog = parseGatewayModelCatalog(requestGatewayObject(gatewayScope, "models.list", params.toString()))
       modelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
         _modelCatalog.value = catalog.models
-        modelCatalogNeedsStatusRefresh = catalog.refreshFailed || catalog.hasPendingProviders
       }
     } catch (err: CancellationException) {
       throw err
     } catch (err: Throwable) {
-      modelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
-        modelCatalogNeedsStatusRefresh = true
-      }
       Log.w("OpenClawRuntime", "Model catalog refresh failed: ${err::class.java.simpleName}")
-    } finally {
-      modelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
-        modelCatalogRefresh = null
-        if (attempt.statusRequested && modelCatalogNeedsStatusRefresh) {
-          launchGatewayRefresh { refreshModelCatalogFromGateway(statusOnly = true) }
-        }
-      }
     }
   }
 
-  private suspend fun refreshProviderModelsFromGateway(
-    refresh: Boolean = false,
-    statusOnly: Boolean = false,
-    legacyHint: Boolean = false,
-  ) {
-    val gatewayScope: GatewayDataScope
-    val agentId: String?
-    val attempt =
-      synchronized(gatewayDataScopeLock) {
-        gatewayScope = captureGatewayDataScope() ?: return
-        agentId = selectedChatAgentId
-        if (legacyHint && providerModelCatalogRefresh != null) {
-          legacyMetadataRefreshPending = true
-          return
-        }
-        if (statusOnly) {
-          providerModelCatalogRefresh?.let {
-            it.statusRequested = true
-            return
-          }
-          if (!providerModelCatalogNeedsStatusRefresh) return
-        }
-        ModelCatalogRefresh(providerModelCatalogRefreshGuard.begin()).also { providerModelCatalogRefresh = it }
-      }
-    val refreshGeneration = attempt.generation
+  private suspend fun refreshProviderModelsFromGateway(refresh: Boolean = false) {
+    val refreshGeneration = providerModelCatalogRefreshGuard.begin()
+    val gatewayScope = captureGatewayDataScope() ?: return
+    val agentId = selectedChatAgentId
     providerModelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
       _providerModelCatalogRefreshing.value = true
+      _providerModelCatalogErrorText.value = null
     }
     if (!operatorConnected) {
       providerModelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
         _providerModelCatalog.value = emptyList()
         _modelAuthProviders.value = emptyList()
         _providerModelCatalogRefreshing.value = false
-        providerModelCatalogRefresh = null
       }
       return
     }
@@ -6691,15 +6502,12 @@ class NodeRuntime internal constructor(
         providerModelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
           // The Gateway owns compatible inventory; an empty result can revoke old choices.
           _providerModelCatalog.value = catalog.models
-          providerModelCatalogNeedsStatusRefresh = catalog.refreshFailed || catalog.hasPendingProviders
-          _providerModelCatalogErrorText.value =
-            if (catalog.refreshFailed) nativeText("Some models could not be refreshed. Tap Refresh to retry.") else null
+          if (catalog.refreshFailed) {
+            _providerModelCatalogErrorText.value = nativeText("Some models could not be refreshed. Tap Refresh to retry.")
+          }
         }
-      } catch (err: CancellationException) {
-        throw err
       } catch (err: Throwable) {
         providerModelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
-          providerModelCatalogNeedsStatusRefresh = err !is ProviderModelConfigUnsupported
           _providerModelCatalogErrorText.value =
             if (err is ProviderModelConfigUnsupported) {
               nativeText("Update your Gateway to view provider model config.")
@@ -6729,43 +6537,23 @@ class NodeRuntime internal constructor(
     } finally {
       providerModelCatalogRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
         _providerModelCatalogRefreshing.value = false
-        providerModelCatalogRefresh = null
-        if (attempt.statusRequested && providerModelCatalogNeedsStatusRefresh) {
-          launchGatewayRefresh { refreshProviderModelsFromGateway(statusOnly = true) }
-        }
       }
     }
   }
 
   private suspend fun refreshTalkSetupReadinessFromGateway() {
-    val refreshGeneration = talkSetupRefreshGuard.begin()
     val gatewayScope = captureGatewayDataScope() ?: return
     if (!operatorConnected) {
-      talkSetupRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
-        _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
-      }
+      _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
       return
     }
     val readiness =
       try {
-        val catalog = requestGatewayObject(gatewayScope, "talk.catalog", "{}")
-        // talk.config selects native stt-tts versus realtime. A failed read must not
-        // fall back to the realtime catalog gate; Talk Mode loads the same config itself.
-        val talkConfig =
-          try {
-            requestGatewayObject(gatewayScope, "talk.config", "{}")?.get("config").asObjectOrNull()
-          } catch (error: CancellationException) {
-            throw error
-          } catch (_: Throwable) {
-            null
-          }
-        talkSetupReadinessFromGateway(catalog, talkConfig)
+        parseGatewayTalkSetupReadiness(requestGatewayObject(gatewayScope, "talk.catalog", "{}"))
       } catch (_: Throwable) {
         GatewayTalkSetupReadiness.unverified(GatewayTalkSetupIssue.CatalogLoadFailed)
       }
-    talkSetupRefreshGuard.publishGatewayRefresh(gatewayScope, refreshGeneration) {
-      _talkSetupReadiness.value = readiness
-    }
+    publishGatewayData(gatewayScope) { _talkSetupReadiness.value = readiness }
   }
 
   private suspend fun refreshCronFromGateway() {

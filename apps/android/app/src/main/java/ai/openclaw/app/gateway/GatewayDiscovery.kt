@@ -350,12 +350,10 @@ class GatewayDiscovery(
     val next = LinkedHashMap<String, GatewayEndpoint>()
     for (ptr in ptrRecords) {
       val instanceFqdn = ptr.target.toString()
-      var srvMessage: Message? = null
       val srv =
         recordByName(ptrMsg, instanceFqdn, Type.SRV) as? SRVRecord
           ?: run {
             val msg = lookupUnicastMessage(instanceFqdn, Type.SRV) ?: return@run null
-            srvMessage = msg
             recordByName(msg, instanceFqdn, Type.SRV) as? SRVRecord
           }
           ?: continue
@@ -365,7 +363,7 @@ class GatewayDiscovery(
       val targetFqdn = srv.target.toString()
       val host =
         resolveHostFromMessage(ptrMsg, targetFqdn)
-          ?: resolveHostFromMessage(srvMessage ?: lookupUnicastMessage(instanceFqdn, Type.SRV), targetFqdn)
+          ?: resolveHostFromMessage(lookupUnicastMessage(instanceFqdn, Type.SRV), targetFqdn)
           ?: resolveHostUnicast(targetFqdn)
           ?: continue
 

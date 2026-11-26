@@ -240,14 +240,14 @@ class SmsManagerTest {
 
   @Test
   fun buildSendPlanUsesMultipartWhenMultipleParts() {
-    val plan = buildSmsSendPlan("hello") { listOf("a", "b") }
+    val plan = SmsManager.buildSendPlan("hello") { listOf("a", "b") }
     assertTrue(plan.useMultipart)
     assertEquals(listOf("a", "b"), plan.parts)
   }
 
   @Test
   fun buildSendPlanFallsBackToSinglePartWhenDividerEmpty() {
-    val plan = buildSmsSendPlan("hello") { emptyList() }
+    val plan = SmsManager.buildSendPlan("hello") { emptyList() }
     assertFalse(plan.useMultipart)
     assertEquals(listOf("hello"), plan.parts)
   }

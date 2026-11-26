@@ -38,6 +38,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -120,18 +121,6 @@ class CameraCaptureManager(
   )
 
   @Volatile private var lifecycleOwner: LifecycleOwner? = null
-  private val lifecycleOwnerObserver =
-    object : LifecycleEventObserver {
-      override fun onStateChanged(
-        source: LifecycleOwner,
-        event: Lifecycle.Event,
-      ) {
-        if (event == Lifecycle.Event.ON_DESTROY) {
-          source.lifecycle.removeObserver(this)
-          if (lifecycleOwner === source) lifecycleOwner = null
-        }
-      }
-    }
 
   companion object {
     // ProcessCameraProvider is process-wide, including during runtime replacement.
@@ -150,11 +139,8 @@ class CameraCaptureManager(
 
   /** Supplies the foreground Activity lifecycle required by CameraX use-case binding. */
   fun attachLifecycleOwner(owner: LifecycleOwner) {
-    // The runtime outlives its Activity, including when no capture is active.
-    if (owner.lifecycle.currentState == Lifecycle.State.DESTROYED) return
-    lifecycleOwner?.lifecycle?.removeObserver(lifecycleOwnerObserver)
+    // CameraX binds use cases to an Activity lifecycle; background services cannot capture alone.
     lifecycleOwner = owner
-    owner.lifecycle.addObserver(lifecycleOwnerObserver)
   }
 
   /** Lists CameraX devices with stable Camera2 ids where available. */
@@ -275,11 +261,28 @@ class CameraCaptureManager(
             val maxEncodedBytes = (maxPayloadBytes / 4) * 3
             val result =
               JpegSizeLimiter.compressToLimit(
-                bitmap = scaled,
+                initialWidth = scaled.width,
+                initialHeight = scaled.height,
                 startQuality = (quality * 100.0).roundToInt().coerceIn(10, 100),
                 minQuality = (quality * 100.0).roundToInt().coerceIn(10, 20),
                 maxBytes = maxEncodedBytes,
-                errorMessage = "UNAVAILABLE: failed to encode JPEG",
+                encode = { width, height, q ->
+                  val bitmap =
+                    if (width == scaled.width && height == scaled.height) {
+                      scaled
+                    } else {
+                      scaled.scale(width, height)
+                    }
+                  val out = ByteArrayOutputStream()
+                  if (!bitmap.compress(Bitmap.CompressFormat.JPEG, q, out)) {
+                    if (bitmap !== scaled) bitmap.recycle()
+                    throw IllegalStateException("UNAVAILABLE: failed to encode JPEG")
+                  }
+                  if (bitmap !== scaled) {
+                    bitmap.recycle()
+                  }
+                  out.toByteArray()
+                },
               )
             val base64 = Base64.encodeToString(result.bytes, Base64.NO_WRAP)
             """{"format":"jpg","base64":"$base64","width":${result.width},"height":${result.height}}"""

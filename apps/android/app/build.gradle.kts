@@ -92,17 +92,24 @@ abstract class GenerateGatewayProtocol : Exec() {
 
 val dnsjavaInetAddressResolverService = "META-INF/services/java.net.spi.InetAddressResolverProvider"
 val openClawAndroidApplicationId = "ai.openclaw.app"
+val openClawAndroidVersionFile = rootProject.file("Config/Version.properties")
 val thirdPartyLicensesDir = rootProject.file("THIRD_PARTY_LICENSES")
-val openClawAndroidVersionDefaults = rootProject.extra["openClawAndroidVersionDefaults"] as Provider<Properties>
+val openClawAndroidVersionProperties =
+  Properties().apply {
+    if (!openClawAndroidVersionFile.isFile) {
+      error("Missing Android version properties. Run `pnpm android:version:sync`.")
+    }
+    openClawAndroidVersionFile.inputStream().use(::load)
+  }
 
 fun requireOpenClawAndroidVersionProperty(name: String): String =
-  (providers.gradleProperty(name).orNull ?: openClawAndroidVersionDefaults.get().getProperty(name))?.trim()?.takeIf { it.isNotEmpty() }
-    ?: error("Missing $name from Android runtime version metadata.")
+  (providers.gradleProperty(name).orNull ?: openClawAndroidVersionProperties.getProperty(name))?.trim()?.takeIf { it.isNotEmpty() }
+    ?: error("Missing $name in Config/Version.properties. Run `pnpm android:version:sync`.")
 
 val openClawAndroidVersionName = requireOpenClawAndroidVersionProperty("OPENCLAW_ANDROID_VERSION_NAME")
 val openClawAndroidVersionCode =
   requireOpenClawAndroidVersionProperty("OPENCLAW_ANDROID_VERSION_CODE").toIntOrNull()
-    ?: error("OPENCLAW_ANDROID_VERSION_CODE must be an integer in Android runtime version metadata.")
+    ?: error("OPENCLAW_ANDROID_VERSION_CODE must be an integer in Config/Version.properties.")
 
 fun optionalOpenClawBuildProperty(name: String): String? =
   providers
@@ -358,9 +365,6 @@ android {
   }
 
   sourceSets {
-    // The same public TLS fixtures exercise JVM and Android platform verification.
-    getByName("test").kotlin.directories.add("src/testShared/java")
-    getByName("androidTest").kotlin.directories.add("src/testShared/java")
     getByName("main") {
       assets.directories.add("../../shared/OpenClawKit/Sources/OpenClawKit/Resources")
       assets.directories.add(rootProject.file("../../ui/public/provider-icons").path)
@@ -616,7 +620,6 @@ dependencies {
   // The Android AAR has bionic dispatch; JVM vectors need the same-version host dispatch JAR.
   testRuntimeOnly("${libs.jna.get()}@jar")
 
-  androidTestImplementation(libs.mockwebserver)
   androidTestImplementation(libs.androidx.test.ext.junit)
   androidTestImplementation(libs.androidx.test.runner)
   androidTestImplementation(libs.androidx.uiautomator)
@@ -698,8 +701,7 @@ val generateMermaidAssets =
   tasks.register<Exec>("generateMermaidAssets") {
     val repositoryRoot = rootProject.projectDir.resolve("../..").canonicalFile
     workingDir(repositoryRoot)
-    val pnpmBin = if (System.getProperty("os.name").startsWith("Windows")) "pnpm.cmd" else "pnpm"
-    commandLine(pnpmBin, "--dir", "packages/mermaid-renderer", "build")
+    commandLine("pnpm", "--dir", "packages/mermaid-renderer", "build")
     inputs
       .files(
         fileTree(repositoryRoot.resolve("packages/mermaid-renderer")) {

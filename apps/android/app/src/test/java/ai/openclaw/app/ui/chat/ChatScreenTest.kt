@@ -70,7 +70,7 @@ class ChatScreenTest {
   fun fastModeControlRequiresSupportAndAnIdleConnectedChat() {
     fun enabled(
       supported: Boolean = true,
-      writeAuthorized: Boolean = true,
+      adminAuthorized: Boolean = true,
       connected: Boolean = true,
       gatewayAvailable: Boolean = true,
       loading: Boolean = false,
@@ -78,11 +78,11 @@ class ChatScreenTest {
       activeRun: Boolean = false,
       streaming: Boolean = false,
       settingsMutationPending: Boolean = false,
-    ) = chatFastModeControlEnabled(supported, writeAuthorized, connected, gatewayAvailable, loading, sending, activeRun, streaming, settingsMutationPending)
+    ) = chatFastModeControlEnabled(supported, adminAuthorized, connected, gatewayAvailable, loading, sending, activeRun, streaming, settingsMutationPending)
 
     assertTrue(enabled())
     assertFalse(enabled(supported = false))
-    assertFalse(enabled(writeAuthorized = false))
+    assertFalse(enabled(adminAuthorized = false))
     assertFalse(enabled(connected = false))
     assertFalse(enabled(gatewayAvailable = false))
     assertFalse(enabled(loading = true))

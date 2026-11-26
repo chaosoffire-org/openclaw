@@ -294,7 +294,7 @@ private class ChatRichBlockWebViewBackend(
 
   // Only bundled rendering scripts run here. Model input is a JSON value, network and
   // device-file access are denied, and the bridge exposes only render completions.
-  @SuppressLint("SetJavaScriptEnabled")
+  @SuppressLint("SetJavaScriptEnabled", "MissingOnRenderProcessGone")
   @Suppress("DEPRECATION")
   private fun createWebView(): WebView? {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return null

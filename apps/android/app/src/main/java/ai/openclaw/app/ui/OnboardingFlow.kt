@@ -1,6 +1,5 @@
 package ai.openclaw.app.ui
 
-import ai.openclaw.app.GATEWAY_TLS_HANDSHAKE_TIMEOUT_REASON
 import ai.openclaw.app.GatewayConnectionProblem
 import ai.openclaw.app.GatewayNodeApprovalActionState
 import ai.openclaw.app.GatewayNodeCapabilityApproval
@@ -651,9 +650,10 @@ fun OnboardingFlow(
     }
 
     fun handleScannedSetupCode(
-      scanned: GatewayScannedSetupCodeResult,
+      rawValue: String,
       inputSource: OnboardingGatewayInputSource,
     ) {
+      val scanned = resolveScannedSetupCodeResult(rawValue)
       if (scanned.setupCode == null) {
         val errorCode =
           when (scanned.error) {
@@ -735,12 +735,12 @@ fun OnboardingFlow(
         setupBarcodeScanner
           .process(image)
           .addOnSuccessListener { barcodes ->
-            val scanned = resolveScannedSetupCodeResult(barcodes.asSequence().map { it.rawValue })
-            if (scanned == null) {
+            val rawValue = barcodes.firstNotNullOfOrNull { barcode -> barcode.rawValue?.takeIf { it.isNotBlank() } }
+            if (rawValue == null) {
               showSetupScanError(OnboardingErrorCode.ImageMissingQr)
               return@addOnSuccessListener
             }
-            handleScannedSetupCode(scanned, inputSource = OnboardingGatewayInputSource.SetupGallery)
+            handleScannedSetupCode(rawValue, inputSource = OnboardingGatewayInputSource.SetupGallery)
           }.addOnFailureListener {
             showSetupScanError(OnboardingErrorCode.ImageQrReadFailed)
           }
@@ -832,7 +832,7 @@ fun OnboardingFlow(
             }
           },
           onRequestCameraPermission = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
-          onCodeScanned = { rawValue -> handleScannedSetupCode(resolveScannedSetupCodeResult(rawValue), inputSource = OnboardingGatewayInputSource.SetupScanner) },
+          onCodeScanned = { rawValue -> handleScannedSetupCode(rawValue, inputSource = OnboardingGatewayInputSource.SetupScanner) },
           onCameraError = {
             showSetupScanError(OnboardingErrorCode.CameraStartFailed)
           },
@@ -924,7 +924,6 @@ fun OnboardingFlow(
           gatewayConnectionProblem = gatewayConnectionProblem,
           onBack = ::goBack,
           onRetry = viewModel::refreshGatewayConnection,
-          onEnterFingerprint = viewModel::enterGatewayFingerprintManually,
           onContinue = ::continueFromGatewayPairing,
         )
       }
@@ -1617,7 +1616,7 @@ private fun analyzeSetupQrFrame(
   scanner
     .process(inputImage)
     .addOnSuccessListener { barcodes ->
-      val rawValue = resolveScannedSetupCodeResult(barcodes.asSequence().map { it.rawValue })?.setupCode
+      val rawValue = barcodes.firstNotNullOfOrNull { barcode -> barcode.rawValue?.takeIf { it.isNotBlank() } }
       if (rawValue != null && scanActive.get() && handledScan.compareAndSet(false, true)) {
         onCodeScanned(rawValue)
       }
@@ -1857,7 +1856,6 @@ private fun GatewayRecoveryScreen(
   gatewayConnectionProblem: GatewayConnectionProblem?,
   onBack: () -> Unit,
   onRetry: () -> Unit,
-  onEnterFingerprint: () -> Unit,
   onContinue: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -1992,11 +1990,6 @@ private fun GatewayRecoveryScreen(
     gatewayNetworkRecoveryHelpUrl(gatewayConnectionProblem)?.let { url ->
       TextButton(onClick = { uriHandler.openUri(url) }) {
         Text(nativeString("Set up Tailscale"), style = ClawTheme.type.body, color = ClawTheme.colors.text)
-      }
-    }
-    if (recoveryState == GatewayRecoveryUiState.Failed && gatewayConnectionProblem?.reason == GATEWAY_TLS_HANDSHAKE_TIMEOUT_REASON) {
-      TextButton(onClick = onEnterFingerprint) {
-        Text(nativeString("Enter fingerprint manually"), style = ClawTheme.type.body, color = ClawTheme.colors.text)
       }
     }
   }

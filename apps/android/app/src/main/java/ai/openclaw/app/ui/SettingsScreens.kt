@@ -105,7 +105,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -141,7 +140,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -160,8 +158,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -655,8 +651,7 @@ private fun VoiceSettingsScreen(
   val voiceWakeLastCommand by viewModel.voiceWakeLastTriggeredCommand.collectAsState()
   val voiceWakeWordsSaving by viewModel.voiceWakeWordsSaving.collectAsState()
   val voiceWakeWordsNoticeText by viewModel.voiceWakeWordsNoticeText.collectAsState()
-  val activeGatewayStableId by viewModel.activeGatewayStableId.collectAsState()
-  var wakeWordDrafts by remember(activeGatewayStableId, voiceWakeWords) {
+  var wakeWordDrafts by remember(voiceWakeWords) {
     mutableStateOf(voiceWakeWords)
   }
   var audioInputDevices by remember { mutableStateOf<List<AudioInputDeviceOption>>(emptyList()) }
@@ -697,7 +692,7 @@ private fun VoiceSettingsScreen(
               title = nativeString("Listen for wake words"),
               subtitle =
                 if (voiceWakeAvailable) {
-                  nativeString("Runs on-device, including in the background while the node service has microphone access.")
+                  nativeString("Runs on-device while OpenClaw is visible.")
                 } else {
                   nativeString("On-device speech recognition is unavailable.")
                 },
@@ -1169,12 +1164,12 @@ private fun NotificationPackageAppRow(
       Modifier
         .fillMaxWidth()
         .heightIn(min = ClawTheme.spacing.row)
-        .toggleable(value = selected, role = Role.Switch, onValueChange = onSelectedChange)
+        .clickable { onSelectedChange(!selected) }
         .padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
   ) {
-    ClawTextBadge(text = notificationAppBadge(app.label), modifier = Modifier.clearAndSetSemantics {})
+    ClawTextBadge(text = notificationAppBadge(app.label))
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
       Text(
         text = app.label,
@@ -1191,7 +1186,7 @@ private fun NotificationPackageAppRow(
         overflow = TextOverflow.Ellipsis,
       )
     }
-    Switch(checked = selected, onCheckedChange = null, modifier = Modifier.minimumInteractiveComponentSize())
+    Switch(checked = selected, onCheckedChange = onSelectedChange)
   }
 }
 
@@ -2043,7 +2038,7 @@ internal fun gatewayAccessLabel(
 
 internal fun gatewayLimitedAccessUpgradeText(): String =
   nativeString(
-    "Use a secure wss:// or Tailscale Serve Gateway, generate a full-access setup code in the web app or with openclaw qr, then scan or paste it below and reconnect to enable settings and upgrades.",
+    "Use a secure wss:// or Tailscale Serve Gateway, generate a full-access setup code in the Control UI or with openclaw qr, then scan or paste it below and reconnect to enable settings and upgrades.",
   )
 
 @Composable
@@ -2353,11 +2348,10 @@ private data class AboutLink(
 
 private val aboutLinks =
   listOf(
-    AboutLink("Support", "community.openclaw.ai", "https://community.openclaw.ai/"),
     AboutLink("Website", "openclaw.ai", "https://openclaw.ai"),
     AboutLink("Docs", "docs.openclaw.ai", "https://docs.openclaw.ai"),
     AboutLink("GitHub", "github.com/openclaw/openclaw", "https://github.com/openclaw/openclaw"),
-    AboutLink("Discord", "discord.gg/clawd", "https://openclaw.ai/discord?from=openclaw-app-android-about"),
+    AboutLink("Discord", "discord.gg/clawd", "https://discord.gg/clawd"),
   )
 
 @Composable
@@ -2451,7 +2445,6 @@ internal fun androidDistributionChannel(flavor: String = BuildConfig.FLAVOR): St
 
 internal fun aboutLinkTitle(title: String): String =
   when (title) {
-    "Support" -> nativeString("Support")
     "Website" -> nativeString("Website")
     "Docs" -> nativeString("Docs")
     else -> title
@@ -3225,7 +3218,7 @@ private fun SettingsToggleListRow(row: SettingsToggleRow) {
       Modifier
         .fillMaxWidth()
         .heightIn(min = 56.dp)
-        .toggleable(value = row.checked, enabled = row.enabled, role = Role.Switch, onValueChange = row.onCheckedChange)
+        .clickable(enabled = row.enabled) { row.onCheckedChange(!row.checked) }
         .padding(horizontal = 10.dp, vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
@@ -3235,7 +3228,7 @@ private fun SettingsToggleListRow(row: SettingsToggleRow) {
       Text(text = row.title, style = ClawTheme.type.body, color = ClawTheme.colors.text, maxLines = 1)
       Text(text = row.subtitle, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
-    Switch(checked = row.checked, onCheckedChange = null, modifier = Modifier.minimumInteractiveComponentSize(), enabled = row.enabled)
+    Switch(checked = row.checked, onCheckedChange = row.onCheckedChange, enabled = row.enabled)
   }
 }
 

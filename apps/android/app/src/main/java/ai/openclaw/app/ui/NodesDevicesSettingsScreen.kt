@@ -296,53 +296,15 @@ private fun DevicePairingConfirmationDialog(
         }
 
         is DevicePairingConfirmation.Reject -> {
-          DevicePairingTarget(
-            message = nativeString("Reject the pairing request from this device?"),
-            displayName = confirmation.device.displayName,
-            deviceId = confirmation.device.deviceId,
-          )
+          Text(nativeString("Reject the pairing request from this device?"))
         }
 
         is DevicePairingConfirmation.Remove -> {
-          DevicePairingTarget(
-            message = nativeString("This device will lose its trusted Gateway access."),
-            displayName = confirmation.device.displayName,
-            deviceId = confirmation.device.deviceId,
-          )
+          Text(nativeString("This device will lose its trusted Gateway access."))
         }
       }
     },
   )
-}
-
-@Composable
-private fun DevicePairingTarget(
-  message: String,
-  displayName: String?,
-  deviceId: String,
-) {
-  Column(
-    modifier = Modifier.verticalScroll(rememberScrollState()),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
-  ) {
-    Text(message)
-    SelectionContainer {
-      Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        val identity =
-          listOfNotNull(
-            displayName?.let { nativeString("Name") to pairingIdentityForDisplay(it, maxCodePoints = 160) },
-            nativeString("Device ID") to pairingIdentityForDisplay(deviceId),
-          )
-        identity.forEach { (label, value) ->
-          Text(
-            text = nativeString("\$label: \$value", label, value),
-            style = ClawTheme.type.body,
-            fontFamily = FontFamily.Monospace,
-          )
-        }
-      }
-    }
-  }
 }
 
 internal fun pendingDeviceIdentityLines(device: GatewayPendingDeviceSummary): List<Pair<String, String>> =

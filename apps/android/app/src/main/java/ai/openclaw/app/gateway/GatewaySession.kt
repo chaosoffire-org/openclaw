@@ -106,17 +106,10 @@ enum class TalkSessionCloseDisposition(
 enum class GatewayMediaKind(
   val wireValue: String,
   val maximumBufferedBytes: Long,
-  val acceptHeader: String = "$wireValue/*",
 ) {
   Image("image", 12L * 1024L * 1024L),
   Audio("audio", 16L * 1024L * 1024L),
   Video("video", 0L),
-  File("file", 100L * 1024L * 1024L, "*/*"), // Gateway document limit (media-core/constants).
-  ;
-
-  fun acceptsMimeType(mimeType: String): Boolean =
-    // Files are exported, not rendered; the Gateway owns document admission.
-    if (this == File) mimeType.isNotBlank() else mimeType.startsWith("$wireValue/")
 }
 
 sealed interface GatewayLoadedMedia {
@@ -210,7 +203,6 @@ data class GatewayErrorDetails(
   val recommendedNextStep: String?,
   val pauseReconnect: Boolean? = null,
   val reason: String? = null,
-  val method: String? = null,
   val requestId: String? = null,
   val retryable: Boolean = false,
   val clientMinProtocol: Int? = null,
@@ -378,19 +370,7 @@ class GatewaySession(
     val code: String,
     val message: String,
     val details: GatewayErrorDetails? = null,
-    val retryable: Boolean = false,
   ) {
-    /** Only the method-bound startup refusal proves this chat send did no handler work. */
-    fun startupRetryDelayMs(method: String): Long? {
-      if (
-        method != "chat.send" || code != "UNAVAILABLE" || !retryable ||
-        details?.reason != "startup-sidecars" || details.method != method
-      ) {
-        return null
-      }
-      return (details.retryAfterMs ?: 500).coerceIn(100, 2_000).toLong()
-    }
-
     fun missingScopeDetails(): GatewayMissingScopeErrorDetails? {
       val details = details ?: return null
       val missingScope = details.missingScope?.trim().orEmpty()
@@ -470,23 +450,6 @@ class GatewaySession(
       timeoutMs: Long = 15_000,
       withEnqueue: (() -> Unit) -> Unit = { it() },
     ): String = requestImpl(method, paramsJson, timeoutMs, withEnqueue)
-
-    /** Voice retains its original input while startup refuses admission on this socket. */
-    suspend fun requestAwaitingStartup(
-      method: String,
-      paramsJson: String?,
-      timeoutMs: Long = 15_000,
-      withEnqueue: (() -> Unit) -> Unit = { it() },
-    ): String {
-      while (true) {
-        try {
-          return request(method, paramsJson, timeoutMs, withEnqueue)
-        } catch (error: GatewayRequestRejected) {
-          val retryDelayMs = error.gatewayError.startupRetryDelayMs(method) ?: throw error
-          delay(retryDelayMs)
-        }
-      }
-    }
   }
 
   private val json =
@@ -836,7 +799,7 @@ class GatewaySession(
   suspend fun request(
     method: String,
     paramsJson: String?,
-    timeoutMs: Long? = null,
+    timeoutMs: Long = 15_000,
   ): String = requestDetailed(method = method, paramsJson = paramsJson, timeoutMs = timeoutMs).payloadOrThrow()
 
   suspend fun loadImageArtifact(
@@ -854,19 +817,6 @@ class GatewaySession(
         kind = GatewayMediaKind.Image,
       ) as? GatewayLoadedMedia.Buffered ?: return null
     return GatewayLoadedImage(bytes = loaded.bytes, mimeType = loaded.mimeType)
-  }
-
-  /** [basePath] is the accepted Control UI mount; null uses the socket's context path. */
-  internal suspend fun loadInboundImage(
-    expectedEndpointStableId: String?,
-    basePath: String?,
-    sessionKey: String,
-    agentId: String?,
-    source: String,
-  ): GatewayLoadedImage? {
-    val conn = readyConnection(expectedEndpointStableId) ?: return null
-    val image = conn.loadInboundImage(basePath, sessionKey, agentId, source, guardRequestEnqueue(conn) { it() })
-    return synchronized(lifecycleLock) { image.takeIf { currentConnection === conn && conn.isReady() } }
   }
 
   internal suspend fun loadSourceFavicon(
@@ -902,7 +852,7 @@ class GatewaySession(
     }
     val payload = response.payloadJson?.let(::parseJsonOrNull).asObjectOrNull() ?: return null
     val artifact = payload["artifact"].asObjectOrNull()
-    // Older gateways returned only the managed-image URL. Other media require the typed
+    // Older gateways returned only the managed-image URL. Audio/video shipped with the typed
     // artifact envelope, so keep the narrow image fallback without weakening their type gate.
     if (artifact == null && kind != GatewayMediaKind.Image) return null
     if (artifact != null && artifact["type"].asStringOrNull()?.trim()?.lowercase(Locale.ROOT) != kind.wireValue) return null
@@ -912,7 +862,7 @@ class GatewaySession(
         .asStringOrNull()
         ?.trim()
         ?.lowercase(Locale.ROOT)
-    if (mimeType != null && !kind.acceptsMimeType(mimeType)) return null
+    if (mimeType != null && !mimeType.startsWith("${kind.wireValue}/")) return null
     val loaded =
       payload["data"].asStringOrNull()?.let { encoded ->
         if (kind == GatewayMediaKind.Video) return@let null
@@ -938,7 +888,7 @@ class GatewaySession(
     expectedEndpointStableId: String,
     method: String,
     paramsJson: String?,
-    timeoutMs: Long? = null,
+    timeoutMs: Long = 15_000,
   ): String = requestDetailed(expectedEndpointStableId, method, paramsJson, timeoutMs).payloadOrThrow()
 
   private fun RpcResult.payloadOrThrow(): String {
@@ -980,7 +930,7 @@ class GatewaySession(
   suspend fun requestDetailed(
     method: String,
     paramsJson: String?,
-    timeoutMs: Long? = null,
+    timeoutMs: Long = 15_000,
   ): RpcResult =
     requestDetailed(
       expectedEndpointStableId = null,
@@ -993,7 +943,7 @@ class GatewaySession(
     expectedEndpointStableId: String?,
     method: String,
     paramsJson: String?,
-    timeoutMs: Long?,
+    timeoutMs: Long,
   ): RpcResult {
     val conn = readyConnection(expectedEndpointStableId) ?: throw GatewayRequestNotEnqueued("not connected")
     return requestDetailed(conn, method, paramsJson, timeoutMs)
@@ -1003,27 +953,13 @@ class GatewaySession(
     conn: Connection,
     method: String,
     paramsJson: String?,
-    timeoutMs: Long?,
+    timeoutMs: Long,
     withEnqueue: (() -> Unit) -> Unit = { it() },
   ): RpcResult {
     val params = parseRequestParams(paramsJson)
-    val hasAudio =
-      method == "chat.send" &&
-        params.asObjectOrNull()?.get("attachments").asArrayOrNull()?.any { attachment ->
-          attachment
-            .asObjectOrNull()
-            ?.get("mimeType")
-            .asStringOrNull()
-            ?.lowercase()
-            ?.startsWith("audio/") == true
-        } == true
-    // Audio transcription precedes durable admission. Disconnect and caller
-    // cancellation still settle the request while it waits for that ACK.
-    val requestTimeoutMs = timeoutMs ?: if (hasAudio) 0L else 15_000L
     val enqueue = guardRequestEnqueue(conn, withEnqueue)
-    if (method != "talk.catalog") return conn.request(method, params, requestTimeoutMs, enqueue)
-    // A disabled RPC deadline must not disable the catalog's bounded warm-up budget.
-    var remainingMs = if (requestTimeoutMs == 0L) 10_000L else minOf(requestTimeoutMs, 10_000)
+    if (method != "talk.catalog") return conn.request(method, params, timeoutMs, enqueue)
+    var remainingMs = minOf(timeoutMs, 10_000)
     val deadline = SystemClock.elapsedRealtime() + remainingMs
     while (true) {
       val result = conn.request(method, params, remainingMs, enqueue)
@@ -1128,7 +1064,7 @@ class GatewaySession(
     private var connectRequestId: String? = null
     val tlsConfig: GatewayTlsConfig? = buildGatewayTlsConfig(target.tls)
     private val client: OkHttpClient = buildClient()
-    private val imageLoader by lazy { GatewayImageLoader(client) }
+    private val sourceFaviconLoader by lazy { GatewaySourceFaviconLoader(client) }
     private var controlUiReadCredentials: List<String> = emptyList()
     private val listener = Listener()
     private var socket: WebSocket? = null
@@ -1250,7 +1186,7 @@ class GatewaySession(
       val deferred = registerPending(id)
       try {
         sendJson(buildRequestFrame(id = id, method = method, params = params), withEnqueue)
-        return if (timeoutMs == 0L) deferred.await() else withTimeout(timeoutMs) { deferred.await() }
+        return withTimeout(timeoutMs) { deferred.await() }
       } catch (err: TimeoutCancellationException) {
         if (method == GatewayMethod.Connect.rawValue) {
           throw GatewayConnectFailure(gatewayNetworkConnectError(timedOut = true))
@@ -1282,28 +1218,10 @@ class GatewaySession(
       hostname: String,
       withEnqueue: (() -> Unit) -> Unit,
     ): GatewayLoadedImage? =
-      imageLoader.loadFavicon(
+      sourceFaviconLoader.load(
         gatewayUrl = "${if (tlsConfig != null) "https" else "http"}://${formatGatewayAuthority(target.endpoint.host, target.endpoint.port)}",
         basePath = config.basePath,
         hostname = hostname,
-        headers = mediaTransportHeaders(),
-        credentials = controlUiReadCredentials,
-        withEnqueue = withEnqueue,
-      )
-
-    suspend fun loadInboundImage(
-      basePath: String?,
-      sessionKey: String,
-      agentId: String?,
-      source: String,
-      withEnqueue: (() -> Unit) -> Unit,
-    ): GatewayLoadedImage? =
-      imageLoader.loadInboundImage(
-        gatewayUrl = "${if (tlsConfig != null) "https" else "http"}://${formatGatewayAuthority(target.endpoint.host, target.endpoint.port)}",
-        basePath = basePath ?: target.endpoint.contextPath,
-        source = source,
-        sessionKey = sessionKey,
-        agentId = agentId,
         headers = mediaTransportHeaders(),
         credentials = controlUiReadCredentials,
         withEnqueue = withEnqueue,
@@ -1327,25 +1245,14 @@ class GatewaySession(
     ): GatewayLoadedMedia.Buffered? =
       withContext(Dispatchers.IO) {
         val resolved = resolveTicketedMediaRequest(ticketedPath, playbackRendition) ?: return@withContext null
-        val request = Request.Builder().url(resolved.url).header("Accept", kind.acceptHeader)
+        val request = Request.Builder().url(resolved.url).header("Accept", "${kind.wireValue}/*")
         for ((name, value) in resolved.headers) {
           request.header(name, value)
         }
-        // Exported documents must not follow a redirect outside the ticketed Gateway route.
-        val downloadClient =
-          if (kind == GatewayMediaKind.File) {
-            client
-              .newBuilder()
-              .followRedirects(false)
-              .followSslRedirects(false)
-              .build()
-          } else {
-            client
-          }
         val retry = GatewayPlaybackRetryState()
         repeat(Int.MAX_VALUE) {
           if (!retry.canAttempt()) return@withContext null
-          val call = downloadClient.newCall(request.build())
+          val call = client.newCall(request.build())
           call.timeout().timeout(20, java.util.concurrent.TimeUnit.SECONDS)
           var retryDelayMs: Long? = null
           call.execute().use { response ->
@@ -1355,7 +1262,7 @@ class GatewaySession(
               if (!response.isSuccessful) return@withContext null
               val body = response.body
               val mimeType = body.contentType()?.toString()?.lowercase(Locale.ROOT) ?: return@withContext null
-              if (!kind.acceptsMimeType(mimeType)) return@withContext null
+              if (!mimeType.startsWith("${kind.wireValue}/")) return@withContext null
               val maximumBytes = kind.maximumBufferedBytes
               val declaredLength = body.contentLength()
               if (declaredLength > maximumBytes) return@withContext null
@@ -2099,7 +2006,6 @@ class GatewaySession(
                 recommendedNextStep = it["recommendedNextStep"].asStringOrNull(),
                 pauseReconnect = it["pauseReconnect"].asBooleanOrNull(),
                 reason = it["reason"].asStringOrNull(),
-                method = it["method"].asStringOrNull(),
                 requestId = normalizeGatewayApprovalRequestId(it["requestId"].asStringOrNull()),
                 retryable = it["retryable"].asBooleanOrNull() == true || wireError.retryable == true,
                 retryAfterMs = frame["error"].asObjectOrNull()?.get("retryAfterMs").asIntOrNull(),
@@ -2112,7 +2018,7 @@ class GatewaySession(
                 requiredScopes = it["requiredScopes"].asStringList(),
               )
             }
-          ErrorShape(wireError.code, wireError.message, details, retryable = wireError.retryable == true)
+          ErrorShape(wireError.code, wireError.message, details)
         }
       pending.remove(id)?.complete(RpcResult(response.ok, payloadJson, error))
     }

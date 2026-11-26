@@ -57,17 +57,11 @@ internal enum class WearLaunchTarget(
   }
 }
 
-// Launched as the watch's default assistant: open the live Talk page.
-internal fun parseWearLaunchTarget(intent: Intent?): WearLaunchTarget =
-  when (intent?.action) {
-    Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND -> WearLaunchTarget.Voice
-    else -> WearLaunchTarget.fromRawValue(intent?.getStringExtra(extraWearLaunchTarget))
-  }
+internal fun parseWearLaunchTarget(intent: Intent?): WearLaunchTarget = WearLaunchTarget.fromRawValue(intent?.getStringExtra(extraWearLaunchTarget))
 
 internal fun consumeWearLaunchTarget(intent: Intent?): WearLaunchTarget =
   parseWearLaunchTarget(intent).also {
     intent?.removeExtra(extraWearLaunchTarget)
-    if (intent?.action == Intent.ACTION_ASSIST || intent?.action == Intent.ACTION_VOICE_COMMAND) intent.action = Intent.ACTION_MAIN
   }
 
 internal data class WearNavigationRequest(
@@ -297,13 +291,6 @@ internal fun OpenClawWearApp(
       }
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-  }
-
-  // Screen-off stops the activity, and ON_STOP suspends Talk; hold the screen while the mic is live.
-  val realtimeLive = state.realtimeTalk.active || state.realtimeCapturing
-  DisposableEffect(view, realtimeLive) {
-    view.keepScreenOn = realtimeLive
-    onDispose { view.keepScreenOn = false }
   }
 
   fun toggleRealtimeTalk() {
